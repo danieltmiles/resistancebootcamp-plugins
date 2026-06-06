@@ -149,6 +149,22 @@ function conflict_survey_handle_generate_anonymous_links() {
     exit;
 }
 
+add_action( 'admin_post_conflict_clear_survey_results', 'conflict_survey_handle_clear_survey_results' );
+function conflict_survey_handle_clear_survey_results() {
+    check_admin_referer( 'conflict_clear_survey_results' );
+    if ( ! current_user_can( 'manage_options' ) ) wp_die( 'Insufficient permissions.' );
+
+    $survey_id = intval( $_POST['survey_id'] ?? 0 );
+    if ( ! $survey_id ) wp_die( 'Survey ID required.' );
+
+    global $wpdb;
+    $responses_table = $wpdb->prefix . 'conflict_survey_responses';
+    $wpdb->delete( $responses_table, [ 'survey_id' => $survey_id ] );
+
+    wp_redirect( add_query_arg( [ 'page' => 'conflict_survey', 'results_cleared' => 1 ], admin_url( 'tools.php' ) ) );
+    exit;
+}
+
 add_action( 'admin_post_conflict_delete_survey_keys', 'conflict_survey_handle_delete_survey_keys' );
 function conflict_survey_handle_delete_survey_keys() {
     check_admin_referer( 'conflict_delete_survey_keys' );
@@ -313,6 +329,10 @@ function conflict_survey_admin_page() {
 
     if ( ! empty( $_GET['keys_deleted'] ) ) {
         echo '<div class="notice notice-success"><p>All survey keys deleted.</p></div>';
+    }
+
+    if ( ! empty( $_GET['results_cleared'] ) ) {
+        echo '<div class="notice notice-success"><p>All survey results cleared.</p></div>';
     }
 
     $surveys = $wpdb->get_results( "SELECT * FROM $surveys_table ORDER BY created_at DESC" );
@@ -483,7 +503,8 @@ function conflict_survey_admin_page() {
 
                     <?php
                     $danger_words = [ 'apple', 'brave', 'cloud', 'dance', 'eagle', 'flame', 'grace', 'honey', 'ivory', 'jewel', 'lemon', 'maple', 'noble', 'ocean', 'pearl', 'river', 'stone', 'tiger', 'vivid', 'zebra' ];
-                    $confirm_word = $danger_words[ array_rand( $danger_words ) ];
+                    $confirm_word_keys    = $danger_words[ array_rand( $danger_words ) ];
+                    $confirm_word_results = $danger_words[ array_rand( $danger_words ) ];
                     $delete_keys_id = 'delete_keys_' . $survey->id;
                     ?>
                     <hr style="margin-top: 2em; border-color: #c00;">
@@ -493,14 +514,21 @@ function conflict_survey_admin_page() {
                         <input type="hidden" name="action" value="conflict_delete_survey_keys">
                         <input type="hidden" name="survey_id" value="<?php echo esc_attr( $survey->id ); ?>">
                         <input type="submit" class="button" style="background:#c00;border-color:#900;color:#fff;" value="Delete All Survey Keys"
-                            onclick="return conflictConfirmDeleteKeys(this.form, '<?php echo esc_js( $confirm_word ); ?>');">
+                            onclick="return conflictConfirmDanger(this.form, '<?php echo esc_js( $confirm_word_keys ); ?>', 'delete all survey keys', 'Keys were not deleted.');">
+                    </form>
+                    <form method="POST" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" style="margin-top: 8px;">
+                        <?php wp_nonce_field( 'conflict_clear_survey_results' ); ?>
+                        <input type="hidden" name="action" value="conflict_clear_survey_results">
+                        <input type="hidden" name="survey_id" value="<?php echo esc_attr( $survey->id ); ?>">
+                        <input type="submit" class="button" style="background:#c00;border-color:#900;color:#fff;" value="Clear All Survey Results"
+                            onclick="return conflictConfirmDanger(this.form, '<?php echo esc_js( $confirm_word_results ); ?>', 'clear all survey results', 'Results were not cleared.');">
                     </form>
                     <script>
-                    function conflictConfirmDeleteKeys(form, word) {
-                        var typed = window.prompt('To delete all survey keys, type this word: ' + word);
+                    function conflictConfirmDanger(form, word, action, cancelMsg) {
+                        var typed = window.prompt('To ' + action + ', type this word: ' + word);
                         if (typed === null) return false;
                         if (typed.trim().toLowerCase() !== word) {
-                            alert('Incorrect word. Keys were not deleted.');
+                            alert('Incorrect word. ' + cancelMsg);
                             return false;
                         }
                         return true;
@@ -668,7 +696,7 @@ function conflict_survey_shortcode( $atts ) {
             </div>
         <?php endforeach; ?>
 
-        <p><input type="submit" class="button button-primary" value="Submit Survey"></p>
+        <p><input type="submit" class="conflict-survey-submit" value="Submit Survey"></p>
     </form>
 
     <style>
@@ -677,7 +705,38 @@ function conflict_survey_shortcode( $atts ) {
         }
         .conflict-survey-form input[type="text"],
         .conflict-survey-form textarea {
-            font-family: inherit;
+            display: block !important;
+            font-family: inherit !important;
+            font-size: 1rem !important;
+            border: 1px solid #8c8f94 !important;
+            border-radius: 3px !important;
+            background-color: #fff !important;
+            color: #2c3338 !important;
+            padding: 6px 8px !important;
+            box-sizing: border-box !important;
+        }
+        .conflict-survey-form input[type="text"]:focus,
+        .conflict-survey-form textarea:focus {
+            border-color: #2271b1 !important;
+            outline: 2px solid #2271b1 !important;
+            outline-offset: 0 !important;
+        }
+        .conflict-survey-submit {
+            display: inline-block !important;
+            padding: 8px 18px !important;
+            font-size: 0.95rem !important;
+            font-family: inherit !important;
+            font-weight: 600 !important;
+            color: #fff !important;
+            background-color: #2271b1 !important;
+            border: 1px solid #135e96 !important;
+            border-radius: 3px !important;
+            cursor: pointer !important;
+            text-decoration: none !important;
+        }
+        .conflict-survey-submit:hover {
+            background-color: #135e96 !important;
+            border-color: #0a4b78 !important;
         }
     </style>
     <?php
