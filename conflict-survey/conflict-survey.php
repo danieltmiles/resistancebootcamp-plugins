@@ -225,7 +225,7 @@ function conflict_survey_admin_page() {
         $text = sanitize_text_field( $_POST['question_text'] ?? '' );
         $type = sanitize_text_field( $_POST['question_type'] ?? '' );
 
-        if ( ! $survey_id || ! $text || ! in_array( $type, [ 'multiple_choice', 'short_text', 'long_text' ], true ) ) {
+        if ( ! $survey_id || ! $text || ! in_array( $type, [ 'multiple_choice', 'select_all', 'short_text', 'long_text' ], true ) ) {
             echo '<div class="notice notice-error"><p>Invalid question data.</p></div>';
         } else {
             $max_order = (int) $wpdb->get_var( $wpdb->prepare(
@@ -240,8 +240,8 @@ function conflict_survey_admin_page() {
             ] );
             $question_id = $wpdb->insert_id;
 
-            // Insert options for multiple choice
-            if ( $type === 'multiple_choice' ) {
+            // Insert options for multiple choice and select all that apply
+            if ( in_array( $type, [ 'multiple_choice', 'select_all' ], true ) ) {
                 $raw_options = sanitize_textarea_field( $_POST['question_options'] ?? '' );
                 $option_list = array_filter( array_map( 'trim', explode( "\n", $raw_options ) ) );
                 $options_table = $wpdb->prefix . 'conflict_survey_question_options';
@@ -267,9 +267,10 @@ function conflict_survey_admin_page() {
 
         $question_id = intval( $_POST['question_id'] ?? 0 );
         $text        = sanitize_text_field( $_POST['question_text'] ?? '' );
+        $new_type    = sanitize_text_field( $_POST['question_type'] ?? '' );
 
-        if ( ! $question_id || ! $text ) {
-            echo '<div class="notice notice-error"><p>Question text is required.</p></div>';
+        if ( ! $question_id || ! $text || ! in_array( $new_type, [ 'multiple_choice', 'select_all', 'short_text', 'long_text' ], true ) ) {
+            echo '<div class="notice notice-error"><p>Question text and a valid type are required.</p></div>';
         } else {
             $existing = $wpdb->get_row( $wpdb->prepare(
                 "SELECT * FROM $questions_table WHERE id = %d",
@@ -277,12 +278,12 @@ function conflict_survey_admin_page() {
             ) );
 
             if ( $existing ) {
-                $wpdb->update( $questions_table, [ 'question_text' => $text ], [ 'id' => $question_id ] );
+                $wpdb->update( $questions_table, [ 'question_text' => $text, 'question_type' => $new_type ], [ 'id' => $question_id ] );
 
-                if ( $existing->question_type === 'multiple_choice' ) {
-                    $options_table = $wpdb->prefix . 'conflict_survey_question_options';
-                    $raw_options   = sanitize_textarea_field( $_POST['question_options'] ?? '' );
-                    $option_list   = array_values( array_filter( array_map( 'trim', explode( "\n", $raw_options ) ) ) );
+                $options_table = $wpdb->prefix . 'conflict_survey_question_options';
+                if ( in_array( $new_type, [ 'multiple_choice', 'select_all' ], true ) ) {
+                    $raw_options = sanitize_textarea_field( $_POST['question_options'] ?? '' );
+                    $option_list = array_values( array_filter( array_map( 'trim', explode( "\n", $raw_options ) ) ) );
 
                     $wpdb->delete( $options_table, [ 'survey_question_id' => $question_id ] );
                     foreach ( $option_list as $idx => $option_text ) {
@@ -292,6 +293,8 @@ function conflict_survey_admin_page() {
                             'option_order'       => $idx,
                         ] );
                     }
+                } else {
+                    $wpdb->delete( $options_table, [ 'survey_question_id' => $question_id ] );
                 }
 
                 echo '<div class="notice notice-success"><p>Question updated.</p></div>';
@@ -382,7 +385,7 @@ function conflict_survey_admin_page() {
                                 <li>
                                     <?php echo esc_html( $q->question_text ); ?>
                                     <br><small>(<?php echo esc_html( ucfirst( str_replace( '_', ' ', $q->question_type ) ) ); ?>)</small>
-                                    <?php if ( $q->question_type === 'multiple_choice' ) : ?>
+                                    <?php if ( in_array( $q->question_type, [ 'multiple_choice', 'select_all' ], true ) ) : ?>
                                         <?php
                                         $options_table = $wpdb->prefix . 'conflict_survey_question_options';
                                         $options = $wpdb->get_results( $wpdb->prepare(
@@ -405,7 +408,7 @@ function conflict_survey_admin_page() {
 
                                     <?php
                                     $edit_options_text = '';
-                                    if ( $q->question_type === 'multiple_choice' ) {
+                                    if ( in_array( $q->question_type, [ 'multiple_choice', 'select_all' ], true ) ) {
                                         $options_table_edit = $wpdb->prefix . 'conflict_survey_question_options';
                                         $edit_opts = $wpdb->get_results( $wpdb->prepare(
                                             "SELECT option_text FROM $options_table_edit WHERE survey_question_id = %d ORDER BY option_order",
@@ -425,12 +428,21 @@ function conflict_survey_admin_page() {
                                                     <td><input type="text" name="question_text" class="regular-text"
                                                         value="<?php echo esc_attr( $q->question_text ); ?>" required></td>
                                                 </tr>
-                                                <?php if ( $q->question_type === 'multiple_choice' ) : ?>
                                                 <tr>
+                                                    <th><label>Type</label></th>
+                                                    <td>
+                                                        <select name="question_type" onchange="conflictToggleEditOptions(<?php echo esc_attr( $q->id ); ?>, this.value)">
+                                                            <option value="short_text"<?php selected( $q->question_type, 'short_text' ); ?>>Short Text</option>
+                                                            <option value="long_text"<?php selected( $q->question_type, 'long_text' ); ?>>Long Text</option>
+                                                            <option value="multiple_choice"<?php selected( $q->question_type, 'multiple_choice' ); ?>>Multiple Choice</option>
+                                                            <option value="select_all"<?php selected( $q->question_type, 'select_all' ); ?>>Select All That Apply</option>
+                                                        </select>
+                                                    </td>
+                                                </tr>
+                                                <tr id="conflict_edit_options_row_<?php echo esc_attr( $q->id ); ?>"<?php if ( ! in_array( $q->question_type, [ 'multiple_choice', 'select_all' ], true ) ) echo ' style="display:none;"'; ?>>
                                                     <th><label>Options<br><small>(one per line)</small></label></th>
                                                     <td><textarea name="question_options" rows="4" style="width:100%;"><?php echo esc_textarea( $edit_options_text ); ?></textarea></td>
                                                 </tr>
-                                                <?php endif; ?>
                                             </table>
                                             <p style="margin:8px 0 0;">
                                                 <input type="submit" class="button button-primary button-small" value="Save">
@@ -464,6 +476,7 @@ function conflict_survey_admin_page() {
                                         <option value="short_text">Short Text</option>
                                         <option value="long_text">Long Text</option>
                                         <option value="multiple_choice">Multiple Choice</option>
+                                        <option value="select_all">Select All That Apply</option>
                                     </select>
                                 </td>
                             </tr>
@@ -546,10 +559,14 @@ function conflict_survey_admin_page() {
         var el = document.getElementById('conflict_edit_form_' + questionId);
         el.style.display = el.style.display === 'none' ? 'block' : 'none';
     }
+    function conflictToggleEditOptions(questionId, type) {
+        var row = document.getElementById('conflict_edit_options_row_' + questionId);
+        row.style.display = (type === 'multiple_choice' || type === 'select_all') ? 'table-row' : 'none';
+    }
     function toggleOptions(select) {
         const survey_id = select.id.split('_')[2];
         const optionsRow = document.getElementById('options_row_' + survey_id);
-        if (select.value === 'multiple_choice') {
+        if (select.value === 'multiple_choice' || select.value === 'select_all') {
             optionsRow.style.display = 'table-row';
         } else {
             optionsRow.style.display = 'none';
@@ -638,7 +655,13 @@ function conflict_survey_shortcode( $atts ) {
             // Insert answers
             foreach ( $questions as $question ) {
                 $answer_key = 'question_' . $question->id;
-                $answer_text = sanitize_textarea_field( $_POST[$answer_key] ?? '' );
+                if ( $question->question_type === 'select_all' ) {
+                    $raw = isset( $_POST[$answer_key] ) && is_array( $_POST[$answer_key] )
+                        ? $_POST[$answer_key] : [];
+                    $answer_text = implode( ', ', array_map( 'sanitize_text_field', $raw ) );
+                } else {
+                    $answer_text = sanitize_textarea_field( $_POST[$answer_key] ?? '' );
+                }
                 if ( $answer_text ) {
                     $wpdb->insert( $answers_table, [
                         'survey_response_id' => $response_id,
@@ -687,6 +710,24 @@ function conflict_survey_shortcode( $atts ) {
                         <div>
                             <label>
                                 <input type="radio" name="question_<?php echo esc_attr( $question->id ); ?>" value="<?php echo esc_attr( $option->option_text ); ?>">
+                                <?php echo esc_html( $option->option_text ); ?>
+                            </label>
+                        </div>
+                    <?php endforeach; ?>
+
+                <?php elseif ( $question->question_type === 'select_all' ) : ?>
+                    <?php
+                    $options_table = $wpdb->prefix . 'conflict_survey_question_options';
+                    $options = $wpdb->get_results( $wpdb->prepare(
+                        "SELECT option_text FROM $options_table WHERE survey_question_id = %d ORDER BY option_order",
+                        $question->id
+                    ) );
+                    ?>
+                    <div style="font-size: 0.85em; color: #666; margin-bottom: 4px;">Select all that apply</div>
+                    <?php foreach ( $options as $option ) : ?>
+                        <div>
+                            <label>
+                                <input type="checkbox" name="question_<?php echo esc_attr( $question->id ); ?>[]" value="<?php echo esc_attr( $option->option_text ); ?>">
                                 <?php echo esc_html( $option->option_text ); ?>
                             </label>
                         </div>
